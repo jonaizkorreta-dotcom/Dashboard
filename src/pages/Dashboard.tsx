@@ -1,29 +1,24 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Filter, Trash2, Edit2, ShieldAlert, Map as MapIcon, List, Box, Circle } from 'lucide-react';
+import { Trash2, Edit2, ShieldAlert, Map as MapIcon, List, Box, BarChart3 } from 'lucide-react';
 import ForceGraph3D from 'react-force-graph-3d';
-import ForceGraph2D from 'react-force-graph-2d';
 import { useAuth } from '../context/AuthContext';
-
-interface AssignmentData {
-  id: string;
-  scope_hours: number;
-  projects: { id: string; name: string };
-  users: { id: string; first_name: string; last_name: string };
-}
+import type { AssignmentData } from '../lib/analytics';
+import { buildGraphData, aggregateByProject, aggregateByUser, attachNodeThreeObject, BNB_COLORS, NODE_COLORS } from '../lib/analytics';
+import DashboardFilters, { type FilterState, emptyFilters } from '../components/DashboardFilters';
+import Charts2D from '../components/Charts2D';
 
 export default function Dashboard() {
   const { user } = useAuth();
   const [data, setData] = useState<AssignmentData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterProject, setFilterProject] = useState('');
-  
+  const [filters, setFilters] = useState<FilterState>(emptyFilters);
+
   // Tabs & Toggles
   const [activeTab, setActiveTab] = useState<'map' | 'list'>('map');
   const [viewMode, setViewMode] = useState<'2D' | '3D'>('3D');
-  
+
   const fg3DRef = useRef<any>(null);
-  const fg2DRef = useRef<any>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -38,14 +33,14 @@ export default function Dashboard() {
         `);
 
       if (error) throw error;
-      
-      const formattedData = (assignments || []).map((item: any) => ({
+
+      const formattedData: AssignmentData[] = (assignments || []).map((item: any) => ({
         id: item.id,
         scope_hours: Number(item.scope_hours),
         projects: Array.isArray(item.projects) ? item.projects[0] : item.projects,
-        users: Array.isArray(item.users) ? item.users[0] : item.users
+        users: Array.isArray(item.users) ? item.users[0] : item.users,
       }));
-      
+
       setData(formattedData);
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -76,13 +71,13 @@ export default function Dashboard() {
   const handleEdit = async (id: string, currentHours: number) => {
     const newHours = prompt("Introduce el nuevo número de horas de scope:", currentHours.toString());
     if (!newHours || isNaN(Number(newHours))) return;
-    
+
     try {
       const { error } = await supabase
         .from('assignments')
         .update({ scope_hours: Number(newHours) })
         .eq('id', id);
-        
+
       if (error) throw error;
       fetchData();
     } catch (error) {
@@ -92,51 +87,42 @@ export default function Dashboard() {
   };
 
   const filteredData = useMemo(() => {
-    if (!filterProject.trim()) return data;
-    const search = filterProject.toLowerCase();
-    return data.filter(item => item.projects?.name.toLowerCase().includes(search));
-  }, [data, filterProject]);
+    const projSearch = filters.project.trim().toLowerCase();
+    const userSearch = filters.user.trim().toLowerCase();
+    const minH = filters.minHours ? Number(filters.minHours) : -Infinity;
+    const maxH = filters.maxHours ? Number(filters.maxHours) : Infinity;
 
-  const graphData = useMemo(() => {
-    const nodesMap = new Map<string, any>();
-    const links: any[] = [];
-
-    data.forEach(item => {
-      const pId = `proj_${item.projects.id}`;
-      const uId = `user_${item.users.id}`;
-
-      if (!nodesMap.has(pId)) {
-        nodesMap.set(pId, { id: pId, name: item.projects.name, group: 'project', val: 0 });
+    return data.filter(item => {
+      if (projSearch && !item.projects?.name.toLowerCase().includes(projSearch)) return false;
+      if (userSearch) {
+        const fullName = `${item.users?.first_name} ${item.users?.last_name}`.toLowerCase();
+        if (!fullName.includes(userSearch)) return false;
       }
-      nodesMap.get(pId).val += item.scope_hours;
-
-      if (!nodesMap.has(uId)) {
-        nodesMap.set(uId, { id: uId, name: `${item.users.first_name} ${item.users.last_name}`, group: 'user', val: 0 });
-      }
-      nodesMap.get(uId).val += item.scope_hours;
-
-      links.push({ source: uId, target: pId, value: item.scope_hours });
+      if (item.scope_hours < minH || item.scope_hours > maxH) return false;
+      return true;
     });
+  }, [data, filters]);
 
-    return { nodes: Array.from(nodesMap.values()), links };
-  }, [data]);
+  const graphData = useMemo(() => buildGraphData(filteredData), [filteredData]);
+  const byProject = useMemo(() => aggregateByProject(filteredData), [filteredData]);
+  const byUser = useMemo(() => aggregateByUser(filteredData), [filteredData]);
 
   if (loading && data.length === 0) {
     return <div className="flex-center" style={{ height: 'calc(100vh - 150px)', color: 'var(--text-muted)' }}>Cargando datos...</div>;
   }
 
   return (
-    <div style={{ height: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column' }}>
-      
+    <div style={{ minHeight: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column' }}>
+
       {/* TABS NAVIGATION */}
       <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-        <button 
+        <button
           onClick={() => setActiveTab('map')}
           className={`btn ${activeTab === 'map' ? 'btn-primary' : 'btn-secondary'}`}
         >
           <MapIcon size={18} /> Mapa Visual
         </button>
-        <button 
+        <button
           onClick={() => setActiveTab('list')}
           className={`btn ${activeTab === 'list' ? 'btn-primary' : 'btn-secondary'}`}
         >
@@ -144,35 +130,45 @@ export default function Dashboard() {
         </button>
       </div>
 
+      {/* SHARED FILTERS (all views) */}
+      <DashboardFilters
+        filters={filters}
+        onChange={setFilters}
+        resultCount={filteredData.length}
+        totalCount={data.length}
+      />
+
       {/* TAB CONTENT: MAP */}
       {activeTab === 'map' && (
-        <div className="glass-panel" style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          
+        <div className="glass-panel" style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 520 }}>
+
           {/* Controls Overlay */}
-          <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 10, background: 'rgba(0,0,0,0.5)', padding: '15px', borderRadius: '12px', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.1)' }}>
-            <h3 style={{ margin: '0 0 10px 0' }}>Mapa Mental de Scope</h3>
-            
+          <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 10, background: 'rgba(11,10,20,0.7)', padding: '15px', borderRadius: '12px', backdropFilter: 'blur(8px)', border: '1px solid rgba(134,59,255,0.25)' }}>
+            <h3 style={{ margin: '0 0 10px 0', fontFamily: 'var(--font-primary)' }}>Mapa Mental de Scope</h3>
+
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '15px' }}>
-              <button 
+              <button
                 onClick={() => setViewMode('2D')}
-                style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid var(--primary)', background: viewMode === '2D' ? 'var(--primary)' : 'transparent', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
+                style={{ padding: '5px 10px', borderRadius: '6px', border: `1px solid ${BNB_COLORS.violet}`, background: viewMode === '2D' ? BNB_COLORS.violet : 'transparent', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
               >
-                <Circle size={14} /> 2D
+                <BarChart3 size={14} /> Barras
               </button>
-              <button 
+              <button
                 onClick={() => setViewMode('3D')}
-                style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid var(--primary)', background: viewMode === '3D' ? 'var(--primary)' : 'transparent', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
+                style={{ padding: '5px 10px', borderRadius: '6px', border: `1px solid ${BNB_COLORS.violet}`, background: viewMode === '3D' ? BNB_COLORS.violet : 'transparent', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
               >
                 <Box size={14} /> 3D
               </button>
             </div>
 
-            <p style={{ margin: 0, fontSize: '0.85rem', color: '#ccc' }}>
-              <span style={{ color: '#ec4899', fontWeight: 'bold' }}>● Rosa</span>: Proyectos<br/>
-              <span style={{ color: '#6366f1', fontWeight: 'bold' }}>● Azul</span>: Personas
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-main)' }}>
+              <span style={{ color: NODE_COLORS.project, fontWeight: 'bold' }}>● Violeta</span>: Proyectos<br />
+              <span style={{ color: NODE_COLORS.user, fontWeight: 'bold' }}>● Azul</span>: Personas
             </p>
-            <p style={{ margin: '10px 0 0 0', fontSize: '0.8rem', color: '#999', maxWidth: '200px' }}>
-              {viewMode === '3D' ? 'Arrastra con clic izquierdo para rotar. Clic derecho para moverte (pan). Rueda para zoom.' : 'Arrastra para moverte. Rueda para zoom.'}
+            <p style={{ margin: '10px 0 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', maxWidth: '220px' }}>
+              {viewMode === '3D'
+                ? 'Arrastra con clic izquierdo para rotar. Clic derecho para moverte (pan). Rueda para zoom. El tamaño del nodo = total de horas.'
+                : 'Diagramas de barras con el total de horas agregado por proyecto y por persona.'}
             </p>
           </div>
 
@@ -182,28 +178,33 @@ export default function Dashboard() {
                 <ForceGraph3D
                   ref={fg3DRef}
                   graphData={graphData as any}
-                  nodeLabel="name"
-                  nodeColor={node => node.group === 'project' ? '#ec4899' : '#6366f1'}
-                  nodeVal={node => Math.max(Math.sqrt(node.val) * 2, 5)}
-                  linkOpacity={0.3}
-                  linkWidth={link => Math.sqrt(link.value) * 0.5}
+                  nodeColor={node => NODE_COLORS[node.group] ?? BNB_COLORS.violet}
+                  nodeVal={node => Math.max(Math.sqrt(node.hours) * 1.2, 2)}
+                  nodeRelSize={1}
+                  nodeOpacity={1}
+                  linkColor={() => BNB_COLORS.violetSoft}
+                  linkOpacity={0.45}
+                  linkWidth={link => Math.max(Math.sqrt(link.value) * 0.6, 0.5)}
+                  linkDirectionalParticles={2}
+                  linkDirectionalParticleWidth={0.8}
+                  linkDirectionalParticleColor={() => BNB_COLORS.blue}
+                  linkDirectionalParticleSpeed={0.006}
                   backgroundColor="rgba(0,0,0,0)"
-                  enableNodeDrag={false}
                   showNavInfo={false}
+                  enableNodeDrag={false}
+                  nodeThreeObject={attachNodeThreeObject}
+                  nodeThreeObjectExtend={true}
+                  linkThreeObjectExtend={true}
                 />
               ) : (
-                <ForceGraph2D
-                  ref={fg2DRef}
-                  graphData={graphData as any}
-                  nodeLabel="name"
-                  nodeColor={node => node.group === 'project' ? '#ec4899' : '#6366f1'}
-                  nodeVal={node => Math.max(Math.sqrt(node.val as number) * 2, 5)}
-                  linkWidth={link => Math.sqrt(link.value as number) * 0.5}
-                  backgroundColor="rgba(0,0,0,0)"
-                />
+                <div style={{ padding: '90px 20px 20px 20px', height: '100%', overflowY: 'auto' }}>
+                  <Charts2D byProject={byProject} byUser={byUser} />
+                </div>
               )
             ) : (
-              <div className="flex-center" style={{ height: '100%', color: 'var(--text-muted)' }}>Cargando mapa...</div>
+              <div className="flex-center" style={{ height: '100%', color: 'var(--text-muted)' }}>
+                No hay datos que coincidan con los filtros actuales.
+              </div>
             )}
           </div>
         </div>
@@ -212,28 +213,17 @@ export default function Dashboard() {
       {/* TAB CONTENT: LIST */}
       {activeTab === 'list' && (
         <div className="glass-panel fade-in" style={{ flex: 1, padding: '2rem', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <h3 style={{ margin: 0, fontSize: '1.5rem' }}>Detalle de Asignaciones</h3>
-            
-            <div className="input-group" style={{ margin: 0, width: '300px' }}>
-              <div style={{ position: 'relative' }}>
-                <Filter size={18} color="var(--primary)" style={{ position: 'absolute', left: '12px', top: '12px' }} />
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="Filtrar por proyecto..."
-                  style={{ paddingLeft: '2.5rem' }}
-                  value={filterProject}
-                  onChange={(e) => setFilterProject(e.target.value)}
-                />
-              </div>
-            </div>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              {filteredData.length} asignaciones
+            </span>
           </div>
 
           <div style={{ overflowY: 'auto', flex: 1, paddingRight: '10px' }}>
             {filteredData.length === 0 ? (
               <div className="flex-center" style={{ height: '200px', color: 'var(--text-muted)' }}>
-                No hay asignaciones que coincidan con tu búsqueda.
+                No hay asignaciones que coincidan con los filtros.
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1.5rem' }}>
@@ -246,14 +236,14 @@ export default function Dashboard() {
                     <div key={item.id} className="glass-card" style={{ padding: '1.5rem' }}>
                       <div className="flex-between" style={{ marginBottom: '1rem' }}>
                         <strong style={{ color: 'var(--primary)', fontSize: '1.1rem' }}>{item.projects?.name}</strong>
-                        <span style={{ fontWeight: 'bold', fontSize: '1.2rem', background: 'rgba(255,255,255,0.1)', padding: '5px 10px', borderRadius: '8px' }}>
+                        <span style={{ fontWeight: 'bold', fontSize: '1.2rem', background: 'rgba(134,59,255,0.15)', color: 'var(--bnb-lavender)', padding: '5px 10px', borderRadius: '8px' }}>
                           {item.scope_hours}h
                         </span>
                       </div>
-                      
+
                       <div className="flex-between" style={{ alignItems: 'flex-end' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                          <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--glass-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 'bold' }}>
+                          <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--bnb-violet), var(--bnb-blue))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 'bold', color: 'white' }}>
                             {item.users?.first_name[0]}{item.users?.last_name[0]}
                           </div>
                           <span className="text-muted">
