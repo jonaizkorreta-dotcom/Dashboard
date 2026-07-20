@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Outlet, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LayoutDashboard, LogOut, Plus } from 'lucide-react';
+import { LogOut, Plus } from 'lucide-react';
 import AddHoursModal from './AddHoursModal';
+import BnbLogo from './BnbLogo';
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -15,7 +16,7 @@ export default function Layout() {
       <nav className="glass-panel" style={{ padding: '1rem 2rem', marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Link to="/" style={{ textDecoration: 'none' }}>
           <h2 className="text-gradient" style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <LayoutDashboard size={24} />
+            <BnbLogo size={28} />
             ScopeTracker
           </h2>
         </Link>
@@ -58,7 +59,7 @@ export default function Layout() {
           background: 'linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%)',
           color: 'white',
           border: 'none',
-          boxShadow: '0 4px 20px rgba(99, 102, 241, 0.5)',
+          boxShadow: '0 4px 20px rgba(134, 59, 255, 0.5)',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',

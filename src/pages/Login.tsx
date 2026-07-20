@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { LogIn } from 'lucide-react';
+import BnbLogo from '../components/BnbLogo';
 
 export default function Login() {
   const [firstName, setFirstName] = useState('');
@@ -21,8 +21,8 @@ export default function Login() {
     <div className="flex-center" style={{ minHeight: '100vh' }}>
       <div className="glass-panel fade-in" style={{ padding: '2.5rem', width: '100%', maxWidth: '400px' }}>
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <div style={{ display: 'inline-flex', padding: '1rem', borderRadius: '50%', background: 'rgba(99, 102, 241, 0.1)', marginBottom: '1rem' }}>
-            <LogIn size={32} color="var(--primary)" />
+          <div style={{ display: 'inline-flex', marginBottom: '1rem' }}>
+            <BnbLogo size={64} />
           </div>
           <h2 style={{ marginBottom: '0.5rem' }}>Bienvenido</h2>
           <p className="text-muted" style={{ color: 'var(--text-muted)' }}>Identifícate para gestionar tus proyectos</p>
